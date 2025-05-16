@@ -1,6 +1,6 @@
 import h5py
 
-def load_pems_data(filepath='D:\Study&Work\Study\硕士课程\CN\data/pems-bay.h5'):
+def load_pems_data(filepath='D:\Study&Work\Study\硕士课程\CN\data\pems-bay.h5'):
     with h5py.File(filepath, 'r') as f:
         data = f['speed/block0_values'][:]
     print(f"data shape: {data.shape}")
