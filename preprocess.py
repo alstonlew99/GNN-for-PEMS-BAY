@@ -40,3 +40,28 @@ def preprocess_data(data, window_size=12, pred_horizon=1):
     print(f"X shape: {X.shape}, y shape: {y.shape}")
     return X, y, scaler
 
+def split_data(X, y, train_ratio=0.7, val_ratio=0.1):
+    """
+    Split the dataset into train, validation, and test sets.
+
+    Parameters:
+        X (ndarray): Input features, shape (samples, window_size, nodes)
+        y (ndarray): Targets, shape (samples, pred_horizon, nodes)
+        train_ratio (float): Proportion of training data
+        val_ratio (float): Proportion of validation data
+
+    Returns:
+        (X_train, y_train), (X_val, y_val), (X_test, y_test)
+    """
+    total_samples = X.shape[0]
+    train_end = int(total_samples * train_ratio)
+    val_end = int(total_samples * (train_ratio + val_ratio))
+
+    X_train, y_train = X[:train_end], y[:train_end]
+    X_val, y_val = X[train_end:val_end], y[train_end:val_end]
+    X_test, y_test = X[val_end:], y[val_end:]
+
+    print(f"Train: {X_train.shape}, Val: {X_val.shape}, Test: {X_test.shape}")
+    return (X_train, y_train), (X_val, y_val), (X_test, y_test)
+
+
