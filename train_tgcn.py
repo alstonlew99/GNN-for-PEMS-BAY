@@ -16,11 +16,11 @@ X, y, scaler = preprocess_data(data, window_size=12, pred_horizon=1)
 
 # Convert to PyTorch tensors
 X_train = torch.tensor(X_train, dtype=torch.float32)
-y_train = torch.tensor(y_train.squeeze(1), dtype=torch.float32)
+y_train = torch.tensor(y_train, dtype=torch.float32)
 X_val = torch.tensor(X_val, dtype=torch.float32)
-y_val = torch.tensor(y_val.squeeze(1), dtype=torch.float32)
+y_val = torch.tensor(y_val, dtype=torch.float32)
 X_test = torch.tensor(X_test, dtype=torch.float32)
-y_test = torch.tensor(y_test.squeeze(1), dtype=torch.float32)
+y_test = torch.tensor(y_test, dtype=torch.float32)
 
 # Build Datasets
 train_loader = DataLoader(TensorDataset(X_train, y_train), batch_size=64, shuffle=True)
@@ -39,6 +39,10 @@ adj_tensor = adj_tensor.to(device)
 
 criterion = nn.MSELoss()
 optimizer = optim.Adam(model.parameters(), lr=0.001)
+
+from torch.optim.lr_scheduler import ReduceLROnPlateau
+scheduler = ReduceLROnPlateau(optimizer, mode='min', patience=3, factor=0.5)
+
 
 # Training loop
 num_epochs = 20
@@ -68,6 +72,7 @@ for epoch in range(num_epochs):
     avg_val_loss = val_loss / len(val_loader)
 
     print(f"Epoch {epoch+1}/{num_epochs} - Train Loss: {avg_train_loss:.4f} - Val Loss: {avg_val_loss:.4f}")
+    scheduler.step(avg_val_loss)
 
 
     def evaluate_on_test(model, test_loader, criterion, adj_tensor):

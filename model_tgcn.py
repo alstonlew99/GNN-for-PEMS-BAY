@@ -6,7 +6,7 @@ class TGCN(nn.Module):
     def __init__(self, num_nodes, in_dim=1, gcn_hidden_dim=64, gru_hidden_dim=64, dropout_rate=0.3):
         super(TGCN, self).__init__()
         self.num_nodes = num_nodes
-        self.gcn1 = GraphConvolution(in_dim, gcn_hidden_dim)
+        self.gcn1 = GraphConvolution(2, gcn_hidden_dim)
         self.gcn2 = GraphConvolution(gcn_hidden_dim, gcn_hidden_dim)
         self.dropout = nn.Dropout(dropout_rate)
 
@@ -20,13 +20,13 @@ class TGCN(nn.Module):
         self.out = nn.Linear(gru_hidden_dim * 2, 1)
 
     def forward(self, x, adj):
-        batch_size, seq_len, num_nodes = x.shape
+        batch_size, seq_len, num_nodes, in_dim = x.shape
 
-        x = x.permute(1, 0, 2)
+        x = x.permute(1, 0, 2,3)
         gcn_outputs = []
 
         for t in range(seq_len):
-            xt = x[t].unsqueeze(-1)
+            xt = x[t]
             h1 = self.gcn1(xt, adj)
             h1 = torch.relu(h1)
             h1 = self.dropout(h1)

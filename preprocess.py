@@ -11,34 +11,34 @@ from sklearn.preprocessing import StandardScaler
 import numpy as np
 
 def preprocess_data(data, window_size=12, pred_horizon=1):
-    """
-    Standardize the data and generate sliding window samples.
+    import numpy as np
 
-    Parameters:
-        data (ndarray): The raw traffic data with shape (T, N)
-        window_size (int): Number of historical time steps used for prediction
-        pred_horizon (int): Number of future steps to predict
+    # [T, N]
+    data = np.array(data)
+    num_samples, num_nodes = data.shape
 
-    Returns:
-        X (ndarray): Input features with shape (num_samples, window_size, N)
-        y (ndarray): Targets with shape (num_samples, pred_horizon, N)
-        scaler (StandardScaler): Fitted scaler object for inverse transform if needed
-    """
-    # Apply Z-score normalization to each sensor (column-wise)
-    scaler = StandardScaler()
-    data_scaled = scaler.fit_transform(data)
+    # Δv = v_t - v_{t-1}
+    diff = np.diff(data, axis=0, prepend=data[0:1])
 
-    # Generate samples using a sliding window
+    data_stack = np.stack([data, diff], axis=-1)
+
     X, y = [], []
-    for i in range(len(data_scaled) - window_size - pred_horizon + 1):
-        X.append(data_scaled[i: i + window_size])
-        y.append(data_scaled[i + window_size: i + window_size + pred_horizon])
+    for t in range(num_samples - window_size - pred_horizon + 1):
+        x_t = data_stack[t : t + window_size]
+        y_t = data[t + window_size + pred_horizon - 1]
+        X.append(x_t)
+        y.append(y_t)
 
-    X = np.stack(X)  # Shape: (num_samples, window_size, num_nodes)
-    y = np.stack(y)  # Shape: (num_samples, pred_horizon, num_nodes)
+    y = np.array(y)
 
-    print(f"X shape: {X.shape}, y shape: {y.shape}")
-    return X, y, scaler
+    # [B, T, N, 2]
+    X = np.array(X)
+    mean = X.mean(axis=(0, 1, 2), keepdims=True)
+    std = X.std(axis=(0, 1, 2), keepdims=True)
+    X = (X - mean) / std
+
+    return X, y, None
+
 
 def split_data(X, y, train_ratio=0.7, val_ratio=0.1):
     """
