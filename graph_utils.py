@@ -62,3 +62,16 @@ def build_knn_adj_matrix(meta_path, k=5):
 
     print(f"kNN adjacency matrix created: shape = {adj.shape}")
     return adj
+
+def normalize_adj(adj):
+    """
+    Symmetrically normalize adjacency matrix:  D^{-1/2} A D^{-1/2}
+    Assumes adj is numpy array, shape [N, N]
+    """
+    adj = adj + np.eye(adj.shape[0])  # Add self-loops
+    d = np.sum(adj, axis=1)
+    d_inv_sqrt = np.power(d, -0.5)
+    d_inv_sqrt[np.isinf(d_inv_sqrt)] = 0.
+    D_inv_sqrt = np.diag(d_inv_sqrt)
+    normalized_adj = D_inv_sqrt @ adj @ D_inv_sqrt
+    return normalized_adj

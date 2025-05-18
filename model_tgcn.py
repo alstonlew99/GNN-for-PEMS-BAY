@@ -20,11 +20,13 @@ class TGCN(nn.Module):
 
         for t in range(seq_len):
             xt = x[t].unsqueeze(-1)
-            h = self.gcn1(xt, adj)
-            h = torch.relu(h)
-            h = self.dropout(h)
-            h = self.gcn2(h, adj)
-            h = torch.relu(h)
+            h1 = self.gcn1(xt, adj)
+            h1 = torch.relu(h1)
+            h1 = self.dropout(h1)
+
+            h2 = self.gcn2(h1, adj)
+            h = torch.relu(h1 + h2)  #Residual connection
+
             gcn_outputs.append(h)
 
         gcn_seq = torch.stack(gcn_outputs, dim=1)
