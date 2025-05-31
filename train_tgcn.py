@@ -10,6 +10,7 @@ from graph_utils import build_knn_adj_matrix,normalize_adj
 
 print("Using device:", torch.cuda.get_device_name(0) if torch.cuda.is_available() else "CPU")
 
+
 data = load_pems_data('D:\Study&Work\Study\硕士课程\CN\data\pems-bay.h5')
 X, y, scaler = preprocess_data(data, window_size=12, pred_horizon=1)
 (X_train, y_train), (X_val, y_val), (X_test, y_test) = split_data(X, y)
@@ -40,8 +41,13 @@ adj_tensor = adj_tensor.to(device)
 criterion = nn.MSELoss()
 optimizer = optim.Adam(model.parameters(), lr=0.001)
 
+best_val_loss = float('inf')
+patience = 5
+patience_counter = 0
+best_model_state = None
+
 # Training loop
-num_epochs = 20
+num_epochs = 80
 for epoch in range(num_epochs):
     model.train()
     total_loss = 0.0
@@ -68,6 +74,21 @@ for epoch in range(num_epochs):
     avg_val_loss = val_loss / len(val_loader)
 
     print(f"Epoch {epoch+1}/{num_epochs} - Train Loss: {avg_train_loss:.4f} - Val Loss: {avg_val_loss:.4f}")
+
+    # EarlyStopping
+    if avg_val_loss < best_val_loss - 1e-4:
+        best_val_loss = avg_val_loss
+        best_model_state = model.state_dict()
+        patience_counter = 0
+        torch.save(model.state_dict(), 'D:\Study&Work\Study\Graph_Neural_Network\model.pth')
+        print("New best val loss， Model saved.")
+    else:
+        patience_counter += 1
+        print(f"No improvement. Patience: {patience_counter}/{patience}")
+
+    if patience_counter >= patience:
+        print("Early stopping")
+        break
 
 
     def evaluate_on_test(model, test_loader, criterion, adj_tensor):
@@ -132,5 +153,8 @@ for epoch in range(num_epochs):
         num_batches=3,
         save_path='D:\Study&Work\Study\硕士课程\CN\Results\\norm_TGCN_node0.png'
     )
+if best_model_state is not None:
+    model.load_state_dict(best_model_state)
+    print("Restored best model weights.")
 
 
