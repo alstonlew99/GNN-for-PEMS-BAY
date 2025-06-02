@@ -13,7 +13,7 @@ class TGCN(nn.Module):
         self.out = nn.Linear(gru_hidden_dim, 1)
 
     def forward(self, x, adj):
-        batch_size, seq_len, num_nodes = x.shape
+        batch_size, seq_len, num_nodes= x.shape
 
         x = x.permute(1, 0, 2)
         gcn_outputs = []

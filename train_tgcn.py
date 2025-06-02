@@ -1,17 +1,18 @@
-
-
 import torch
 import torch.nn as nn
 import torch.optim as optim
 from torch.utils.data import TensorDataset, DataLoader
 from model_tgcn import TGCN
 from preprocess import load_pems_data, preprocess_data, split_data
-from graph_utils import build_knn_adj_matrix,normalize_adj
+from graph_utils import build_knn_adj_matrix, normalize_adj
+import matplotlib.pyplot as plt
+import numpy as np
+import os
 
 print("Using device:", torch.cuda.get_device_name(0) if torch.cuda.is_available() else "CPU")
 
-
-data = load_pems_data('D:\Study&Work\Study\硕士课程\CN\data\pems-bay.h5')
+# Load and preprocess data
+data = load_pems_data('D:/Study&Work/Study/硕士课程/CN/data/pems-bay.h5')
 X, y, scaler = preprocess_data(data, window_size=12, pred_horizon=1)
 (X_train, y_train), (X_val, y_val), (X_test, y_test) = split_data(X, y)
 
@@ -28,8 +29,8 @@ train_loader = DataLoader(TensorDataset(X_train, y_train), batch_size=64, shuffl
 val_loader = DataLoader(TensorDataset(X_val, y_val), batch_size=64)
 test_loader = DataLoader(TensorDataset(X_test, y_test), batch_size=64)
 
-#Load adjacency matrix
-adj_matrix = build_knn_adj_matrix(r'D:\Study&Work\Study\硕士课程\CN\data\pems-bay-meta.h5', k=5)
+# Load adjacency matrix
+adj_matrix = build_knn_adj_matrix('D:/Study&Work/Study/硕士课程/CN/data/pems-bay-meta.h5', k=5)
 adj_matrix = normalize_adj(adj_matrix)
 adj_tensor = torch.tensor(adj_matrix, dtype=torch.float32)
 
@@ -44,7 +45,7 @@ optimizer = optim.Adam(model.parameters(), lr=0.001)
 best_val_loss = float('inf')
 patience = 5
 patience_counter = 0
-best_model_state = None
+best_model_path = 'D:/Study&Work/Study/Graph_Neural_Network/model.pth'
 
 # Training loop
 num_epochs = 80
@@ -75,86 +76,78 @@ for epoch in range(num_epochs):
 
     print(f"Epoch {epoch+1}/{num_epochs} - Train Loss: {avg_train_loss:.4f} - Val Loss: {avg_val_loss:.4f}")
 
-    # EarlyStopping
+    # EarlyStopping + model saving
     if avg_val_loss < best_val_loss - 1e-4:
         best_val_loss = avg_val_loss
-        best_model_state = model.state_dict()
         patience_counter = 0
-        torch.save(model.state_dict(), 'D:\Study&Work\Study\Graph_Neural_Network\model.pth')
-        print("New best val loss， Model saved.")
+        torch.save(model.state_dict(), best_model_path)
+        print("New best val loss，Model saved.")
     else:
         patience_counter += 1
         print(f"No improvement. Patience: {patience_counter}/{patience}")
+        if patience_counter >= patience:
+            print("Early stopping")
+            break
 
-    if patience_counter >= patience:
-        print("Early stopping")
-        break
+# Load best model
+model.load_state_dict(torch.load(best_model_path))
+print("Restored best model weights.")
 
+# Test Evaluation
+def evaluate_on_test(model, test_loader, criterion, adj_tensor):
+    model.eval()
+    total_loss = 0.0
+    mae_total = 0.0
+    with torch.no_grad():
+        for X_batch, y_batch in test_loader:
+            X_batch = X_batch.to(device)
+            y_batch = y_batch.to(device)
+            output = model(X_batch, adj_tensor)
+            loss = criterion(output, y_batch)
+            mae = torch.mean(torch.abs(output - y_batch))
+            total_loss += loss.item()
+            mae_total += mae.item()
+    print(f"Test MSE Loss: {total_loss / len(test_loader):.4f}")
+    print(f"Test MAE: {mae_total / len(test_loader):.4f}")
 
-    def evaluate_on_test(model, test_loader, criterion, adj_tensor):
-        model.eval()
-        total_loss = 0.0
-        mae_total = 0.0
-        with torch.no_grad():
-            for X_batch, y_batch in test_loader:
-                X_batch = X_batch.to(device)
-                y_batch = y_batch.to(device)
-                output = model(X_batch, adj_tensor)
-                loss = criterion(output, y_batch)
-                mae = torch.mean(torch.abs(output - y_batch))
-                total_loss += loss.item()
-                mae_total += mae.item()
-        print(f"Test MSE Loss: {total_loss / len(test_loader):.4f}")
-        print(f"Test MAE: {mae_total / len(test_loader):.4f}")
+evaluate_on_test(model, test_loader, criterion, adj_tensor)
 
+# Plot
 
-    evaluate_on_test(model, test_loader, criterion, adj_tensor)
+def plot_prediction(model, test_loader, adj_tensor, node_index=0, num_batches=3, save_path=None):
+    model.eval()
+    preds = []
+    trues = []
+    with torch.no_grad():
+        for i, (X_batch, y_batch) in enumerate(test_loader):
+            if i >= num_batches:
+                break
+            X_batch = X_batch.to(device)
+            output = model(X_batch, adj_tensor).cpu().numpy()
+            y_batch = y_batch.cpu().numpy()
+            preds.append(output[:, node_index])
+            trues.append(y_batch[:, node_index])
 
+    preds = np.concatenate(preds)
+    trues = np.concatenate(trues)
 
-    def plot_prediction(model, test_loader, adj_tensor, node_index=0, num_batches=3, save_path=None):
-        import matplotlib.pyplot as plt
-        import numpy as np
-        import os
+    plt.figure(figsize=(10, 4))
+    plt.plot(trues, label='Ground Truth')
+    plt.plot(preds, label='Prediction')
+    plt.title(f'T-GCN Prediction vs Ground Truth - Node {node_index}')
+    plt.legend()
+    plt.tight_layout()
+    if save_path:
+        os.makedirs(os.path.dirname(save_path), exist_ok=True)
+        plt.savefig(save_path, dpi=300)
+        print(f"Plot saved to {save_path}")
+    plt.show()
 
-        model.eval()
-        preds = []
-        trues = []
-        with torch.no_grad():
-            for i, (X_batch, y_batch) in enumerate(test_loader):
-                if i >= num_batches:
-                    break
-                X_batch = X_batch.to(device)
-                output = model(X_batch, adj_tensor).cpu().numpy()
-                y_batch = y_batch.cpu().numpy()
-                preds.append(output[:, node_index])
-                trues.append(y_batch[:, node_index])
-
-        preds = np.concatenate(preds)
-        trues = np.concatenate(trues)
-
-        plt.figure(figsize=(10, 4))
-        plt.plot(trues, label='Ground Truth')
-        plt.plot(preds, label='Prediction')
-        plt.title(f'T-GCN Prediction vs Ground Truth - Node {node_index}')
-        plt.legend()
-        plt.tight_layout()
-        if save_path:
-            os.makedirs(os.path.dirname(save_path), exist_ok=True)
-            plt.savefig(save_path, dpi=300)
-            print(f"Plot saved to {save_path}")
-        plt.show()
-
-
-    plot_prediction(
-        model=model,
-        test_loader=test_loader,
-        adj_tensor=adj_tensor,
-        node_index=0,
-        num_batches=3,
-        save_path='D:\Study&Work\Study\硕士课程\CN\Results\\norm_TGCN_node0.png'
-    )
-if best_model_state is not None:
-    model.load_state_dict(best_model_state)
-    print("Restored best model weights.")
-
-
+plot_prediction(
+    model=model,
+    test_loader=test_loader,
+    adj_tensor=adj_tensor,
+    node_index=0,
+    num_batches=3,
+    save_path='D:/Study&Work/Study/硕士课程/CN/Results/norm_TGCN_node0.png'
+)
