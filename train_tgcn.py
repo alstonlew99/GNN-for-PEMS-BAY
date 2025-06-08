@@ -1,3 +1,4 @@
+
 import torch
 import torch.nn as nn
 import torch.optim as optim
@@ -11,12 +12,10 @@ import os
 
 print("Using device:", torch.cuda.get_device_name(0) if torch.cuda.is_available() else "CPU")
 
-# Load and preprocess data
 data = load_pems_data('D:/Study&Work/Study/硕士课程/CN/data/pems-bay.h5')
 X, y, scaler = preprocess_data(data, window_size=12, pred_horizon=1)
 (X_train, y_train), (X_val, y_val), (X_test, y_test) = split_data(X, y)
 
-# Convert to PyTorch tensors
 X_train = torch.tensor(X_train, dtype=torch.float32)
 y_train = torch.tensor(y_train.squeeze(1), dtype=torch.float32)
 X_val = torch.tensor(X_val, dtype=torch.float32)
@@ -24,17 +23,14 @@ y_val = torch.tensor(y_val.squeeze(1), dtype=torch.float32)
 X_test = torch.tensor(X_test, dtype=torch.float32)
 y_test = torch.tensor(y_test.squeeze(1), dtype=torch.float32)
 
-# Build Datasets
 train_loader = DataLoader(TensorDataset(X_train, y_train), batch_size=64, shuffle=True)
 val_loader = DataLoader(TensorDataset(X_val, y_val), batch_size=64)
 test_loader = DataLoader(TensorDataset(X_test, y_test), batch_size=64)
 
-# Load adjacency matrix
 adj_matrix = build_knn_adj_matrix('D:/Study&Work/Study/硕士课程/CN/data/pems-bay-meta.h5', k=5)
 adj_matrix = normalize_adj(adj_matrix)
 adj_tensor = torch.tensor(adj_matrix, dtype=torch.float32)
 
-# Model, loss, optimizer
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 model = TGCN(num_nodes=325, gcn_hidden_dim=128, gru_hidden_dim=128, dropout_rate=0.3).to(device)
 adj_tensor = adj_tensor.to(device)
@@ -47,7 +43,6 @@ patience = 5
 patience_counter = 0
 best_model_path = 'D:/Study&Work/Study/Graph_Neural_Network/model.pth'
 
-# Training loop
 num_epochs = 80
 for epoch in range(num_epochs):
     model.train()
@@ -64,7 +59,6 @@ for epoch in range(num_epochs):
 
     avg_train_loss = total_loss / len(train_loader)
 
-    # Validation
     model.eval()
     val_loss = 0.0
     with torch.no_grad():
@@ -76,7 +70,6 @@ for epoch in range(num_epochs):
 
     print(f"Epoch {epoch+1}/{num_epochs} - Train Loss: {avg_train_loss:.4f} - Val Loss: {avg_val_loss:.4f}")
 
-    # EarlyStopping + model saving
     if avg_val_loss < best_val_loss - 1e-4:
         best_val_loss = avg_val_loss
         patience_counter = 0
@@ -89,11 +82,9 @@ for epoch in range(num_epochs):
             print("Early stopping")
             break
 
-# Load best model
 model.load_state_dict(torch.load(best_model_path))
 print("Restored best model weights.")
 
-# Test Evaluation
 def evaluate_on_test(model, test_loader, criterion, adj_tensor):
     model.eval()
     total_loss = 0.0
@@ -111,8 +102,6 @@ def evaluate_on_test(model, test_loader, criterion, adj_tensor):
     print(f"Test MAE: {mae_total / len(test_loader):.4f}")
 
 evaluate_on_test(model, test_loader, criterion, adj_tensor)
-
-# Plot
 
 def plot_prediction(model, test_loader, adj_tensor, node_index=0, num_batches=3, save_path=None):
     model.eval()
@@ -143,11 +132,20 @@ def plot_prediction(model, test_loader, adj_tensor, node_index=0, num_batches=3,
         print(f"Plot saved to {save_path}")
     plt.show()
 
-plot_prediction(
-    model=model,
-    test_loader=test_loader,
-    adj_tensor=adj_tensor,
-    node_index=0,
-    num_batches=3,
-    save_path='D:/Study&Work/Study/硕士课程/CN/Results/norm_TGCN_node0.png'
-)
+import pandas as pd
+from sklearn.metrics import mean_squared_error, mean_absolute_error
+
+def select_nodes_by_centrality(path, top_n=5):
+    df = pd.read_csv(path)
+    df_sorted = df.sort_values('Eigenvector', ascending=False)
+    high_nodes = df_sorted.head(top_n)['Node'].tolist()
+    low_nodes = df_sorted.tail(top_n)['Node'].tolist()
+    return high_nodes, low_nodes
+
+high_nodes, low_nodes = select_nodes_by_centrality('D:/Study&Work/Study/硕士课程/CN/Results/centrality_scores.csv', top_n=3)
+selected_nodes = high_nodes + low_nodes
+
+for node in selected_nodes:
+    save_path = f"D:/Study&Work/Study/硕士课程/CN/Results/pred_node{node}.png"
+    print(f"Plotting node {node}")
+    plot_prediction(model, test_loader, adj_tensor, node_index=node, num_batches=3, save_path=save_path)
