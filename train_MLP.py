@@ -43,7 +43,7 @@ optimizer = optim.Adam(model.parameters(), lr=0.001)
 device = 'cuda' if torch.cuda.is_available() else 'cpu'
 
 # Training loop
-num_epochs = 20
+num_epochs = 5
 for epoch in range(num_epochs):
     model.train()
     total_loss = 0.0
@@ -121,11 +121,11 @@ def plot_prediction(model, test_loader, node_index=0, num_batches=1, save_path=N
         print(f"Plot saved to: {save_path}")
     plt.show()
 
-# Plot at Node 0 and save the plot
+# Plot at Node 243 and save the plot
 plot_prediction(
     model=model,
     test_loader=test_loader,
-    node_index=0,
+    node_index=243,
     num_batches=3,
-    save_path='D:\Study&Work\Study\硕士课程\CN\Results\\node0_prediction.png'
+    save_path='D:\Study&Work\Study\硕士课程\CN\Results\\node243_prediction.png'
 )
