@@ -1,131 +1,106 @@
-from preprocess import load_pems_data, preprocess_data, split_data
-import torch
-import torch.nn as nn
-import torch.optim as optim
-from torch.utils.data import TensorDataset, DataLoader
-from model_MLP import MLPForecast
-import matplotlib.pyplot as plt
 import numpy as np
+import torch
+from torch import nn
+from torch.utils.data import TensorDataset, DataLoader
+from preprocess import preprocess_by_time_and_windows
+from model_MLP import MLPForecast
 
-#Load and preprocess data
-data = load_pems_data('D:\Study&Work\Study\硕士课程\CN\data\pems-bay.h5')
-X, y, scaler = preprocess_data(data, window_size=12, pred_horizon=1)
-(X_train, y_train), (X_val, y_val), (X_test, y_test) = split_data(X, y)
+device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
-#Convert to PyTorch tensors
-X_train_tensor = torch.tensor(X_train, dtype=torch.float32)
-y_train_tensor = torch.tensor(y_train.squeeze(1), dtype=torch.float32)
+# data: np.ndarray of shape [T, N]
+# Replace the following line with your own loader.
+data = np.load("pems_speed.npy")  # placeholder
 
-X_val_tensor = torch.tensor(X_val, dtype=torch.float32)
-y_val_tensor = torch.tensor(y_val.squeeze(1), dtype=torch.float32)
+L_in, H = 12, 1
+prep = preprocess_by_time_and_windows(data, L_in=L_in, H=H, ratios=(0.7, 0.1, 0.2))
 
-X_test_tensor = torch.tensor(X_test, dtype=torch.float32)
-y_test_tensor = torch.tensor(y_test.squeeze(1), dtype=torch.float32)
+Xtr, Ytr = prep["X_train"], prep["Y_train"]  # [B, L_in, N], [B, H, N]
+Xva, Yva = prep["X_val"],   prep["Y_val"]
+Xte, Yte = prep["X_test"],  prep["Y_test"]
 
-#Build DataLoaders
-train_dataset = TensorDataset(X_train_tensor, y_train_tensor)
-val_dataset = TensorDataset(X_val_tensor, y_val_tensor)
-test_dataset = TensorDataset(X_test_tensor, y_test_tensor)
+Btr, Lin, N = Xtr.shape[0], Xtr.shape[1], Xtr.shape[2]
+Xtr = Xtr.reshape(Btr, Lin * N)
+Ytr = Ytr[:, 0, :]  # [B, N]
 
-train_loader = DataLoader(train_dataset, batch_size=64, shuffle=True)
-val_loader = DataLoader(val_dataset, batch_size=64)
-test_loader = DataLoader(test_dataset, batch_size=64)
+Bva = Xva.shape[0]
+Xva = Xva.reshape(Bva, Lin * N)
+Yva = Yva[:, 0, :]
 
-model = MLPForecast(input_len=12, num_nodes=325)
+Bte = Xte.shape[0]
+Xte = Xte.reshape(Bte, Lin * N)
+Yte = Yte[:, 0, :]
 
-# Instantiate model
-model = MLPForecast(input_len=12, num_nodes=325)
-model = model.to('cuda' if torch.cuda.is_available() else 'cpu')
+Xtr = torch.tensor(Xtr, dtype=torch.float32)
+Ytr = torch.tensor(Ytr, dtype=torch.float32)
+Xva = torch.tensor(Xva, dtype=torch.float32)
+Yva = torch.tensor(Yva, dtype=torch.float32)
+Xte = torch.tensor(Xte, dtype=torch.float32)
+Yte = torch.tensor(Yte, dtype=torch.float32)
 
-# Define loss and optimizer
-criterion = nn.MSELoss()
-optimizer = optim.Adam(model.parameters(), lr=0.001)
-device = 'cuda' if torch.cuda.is_available() else 'cpu'
+train_loader = DataLoader(TensorDataset(Xtr, Ytr), batch_size=128, shuffle=True, drop_last=False)
+val_loader   = DataLoader(TensorDataset(Xva, Yva), batch_size=128, shuffle=False, drop_last=False)
+test_loader  = DataLoader(TensorDataset(Xte, Yte), batch_size=128, shuffle=False, drop_last=False)
 
-# Training loop
-num_epochs = 5
-for epoch in range(num_epochs):
+in_dim = Lin * N
+out_dim = N
+model = MLPForecast(input_dim=in_dim, hidden_dim=256, output_dim=out_dim, dropout=0.3).to(device)  # adjust args if needed
+crit = nn.MSELoss()
+opt = torch.optim.Adam(model.parameters(), lr=1e-3)
+best_val = np.inf
+patience, wait = 5, 0
+epochs = 100
+
+for epoch in range(1, epochs + 1):
     model.train()
-    total_loss = 0.0
-    for X_batch, y_batch in train_loader:
-        X_batch, y_batch = X_batch.to(device), y_batch.to(device)
-        optimizer.zero_grad()
-        output = model(X_batch)  # shape: [batch, 325]
-        loss = criterion(output, y_batch)
+    train_loss = 0.0
+    for xb, yb in train_loader:
+        xb = xb.to(device)
+        yb = yb.to(device)
+        opt.zero_grad()
+        pred = model(xb)
+        loss = crit(pred, yb)
         loss.backward()
-        optimizer.step()
-        total_loss += loss.item()
-    avg_train_loss = total_loss / len(train_loader)
-    # Validation
+        opt.step()
+        train_loss += loss.item() * xb.size(0)
+    train_loss /= len(train_loader.dataset)
+
     model.eval()
     val_loss = 0.0
     with torch.no_grad():
-        for X_val_batch, y_val_batch in val_loader:
-            X_val_batch, y_val_batch = X_val_batch.to(device), y_val_batch.to(device)
-            val_output = model(X_val_batch)
-            loss = criterion(val_output, y_val_batch)
-            val_loss += loss.item()
-    avg_val_loss = val_loss / len(val_loader)
+        for xb, yb in val_loader:
+            xb = xb.to(device)
+            yb = yb.to(device)
+            pred = model(xb)
+            loss = crit(pred, yb)
+            val_loss += loss.item() * xb.size(0)
+    val_loss /= len(val_loader.dataset)
 
-    print(f"Epoch {epoch+1}/{num_epochs} - Train Loss: {avg_train_loss:.4f} - Val Loss: {avg_val_loss:.4f}")
+    if val_loss < best_val:
+        best_val = val_loss
+        wait = 0
+        torch.save(model.state_dict(), "mlp_best.pt")
+    else:
+        wait += 1
+        if wait >= patience:
+            break
 
+# test
+model.load_state_dict(torch.load("mlp_best.pt", map_location=device))
+model.eval()
+test_loss = 0.0
+pred_list, true_list = [], []
+with torch.no_grad():
+    for xb, yb in test_loader:
+        xb = xb.to(device)
+        yb = yb.to(device)
+        pred = model(xb)
+        loss = crit(pred, yb)
+        test_loss += loss.item() * xb.size(0)
+        pred_list.append(pred.cpu().numpy())
+        true_list.append(yb.cpu().numpy())
+test_loss /= len(test_loader.dataset)
 
-#Evaluate on test set
-def evaluate_on_test(model, test_loader, criterion):
-    model.eval()
-    total_loss = 0.0
-    mae_total = 0.0
-    with torch.no_grad():
-        for X_batch, y_batch in test_loader:
-            X_batch = X_batch.to(device)
-            y_batch = y_batch.to(device)
-            output = model(X_batch)
-            loss = criterion(output, y_batch)
-            mae = torch.mean(torch.abs(output - y_batch))
-
-            total_loss += loss.item()
-            mae_total += mae.item()
-
-    print(f"\nTest MSE Loss: {total_loss / len(test_loader):.4f}")
-    print(f"Test MAE: {mae_total / len(test_loader):.4f}")
-
-# Run test evaluation
-evaluate_on_test(model, test_loader, criterion)
-
-def plot_prediction(model, test_loader, node_index=0, num_batches=1, save_path=None):
-    model.eval()
-    preds = []
-    trues = []
-    with torch.no_grad():
-        for i, (X_batch, y_batch) in enumerate(test_loader):
-            if i >= num_batches:
-                break
-            X_batch = X_batch.to(device)
-            output = model(X_batch).cpu().numpy()
-            y_batch = y_batch.squeeze(1).numpy()
-
-            preds.append(output[:, node_index])
-            trues.append(y_batch[:, node_index])
-    preds = np.concatenate(preds)
-    trues = np.concatenate(trues)
-
-    plt.figure(figsize=(10, 4))
-    plt.plot(trues, label='Ground Truth')
-    plt.plot(preds, label='Prediction')
-    plt.title(f'Prediction vs Ground Truth - Node {node_index}')
-    plt.legend()
-    plt.tight_layout()
-
-    if save_path:
-        plt.savefig(save_path, dpi=300)
-        print(f"Plot saved to: {save_path}")
-    plt.show()
-
-# Plot at Node 243 and save the plot
-plot_prediction(
-    model=model,
-    test_loader=test_loader,
-    node_index=243,
-    num_batches=3,
-    save_path='D:\Study&Work\Study\硕士课程\CN\Results\\node243_prediction.png'
-)
+y_pred_test = np.concatenate(pred_list, axis=0)  # [T_test, N]
+y_true_test = np.concatenate(true_list, axis=0)  # [T_test, N]
+np.savez("mlp_test_outputs.npz", y_pred=y_pred_test, y_true=y_true_test, split_indices=prep["split_indices"])
+print(f"Test MSE: {test_loss:.6f}")

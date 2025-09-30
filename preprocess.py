@@ -1,67 +1,42 @@
-import h5py
-
-def load_pems_data(filepath='D:\Study&Work\Study\硕士课程\CN\data\pems-bay.h5'):
-    with h5py.File(filepath, 'r') as f:
-        data = f['speed/block0_values'][:]
-    print(f"data shape: {data.shape}")
-    return data
-
-
-from sklearn.preprocessing import StandardScaler
 import numpy as np
+from sklearn.preprocessing import StandardScaler
 
-def preprocess_data(data, window_size=12, pred_horizon=1):
-    """
-    Standardize the data and generate sliding window samples.
+def chronological_split_by_ratio(data: np.ndarray, ratios=(0.7, 0.1, 0.2)):
+    T = data.shape[0]
+    t1 = int(T * ratios[0])
+    t2 = int(T * (ratios[0] + ratios[1]))
+    train_raw = data[:t1]
+    val_raw = data[t1:t2]
+    test_raw = data[t2:]
+    return (train_raw, val_raw, test_raw), ((0, t1), (t1, t2), (t2, T))
 
-    Parameters:
-        data (ndarray): The raw traffic data with shape (T, N)
-        window_size (int): Number of historical time steps used for prediction
-        pred_horizon (int): Number of future steps to predict
+def fit_transform_splits(train_raw, val_raw, test_raw):
+    scaler = StandardScaler(with_mean=True, with_std=True)
+    train = scaler.fit_transform(train_raw)
+    val = scaler.transform(val_raw)
+    test = scaler.transform(test_raw)
+    return (train, val, test), scaler
 
-    Returns:
-        X (ndarray): Input features with shape (num_samples, window_size, N)
-        y (ndarray): Targets with shape (num_samples, pred_horizon, N)
-        scaler (StandardScaler): Fitted scaler object for inverse transform if needed
-    """
-    # Apply Z-score normalization to each sensor (column-wise)
-    scaler = StandardScaler()
-    data_scaled = scaler.fit_transform(data)
+def make_windows(series_2d: np.ndarray, L_in=12, H=1):
+    T, N = series_2d.shape
+    X, Y = [], []
+    for t in range(L_in, T - H + 1):
+        X.append(series_2d[t - L_in:t, :])
+        Y.append(series_2d[t:t + H, :])
+    if not X:
+        return np.empty((0, L_in, series_2d.shape[1])), np.empty((0, H, series_2d.shape[1]))
+    return np.stack(X), np.stack(Y)
 
-    # Generate samples using a sliding window
-    X, y = [], []
-    for i in range(len(data_scaled) - window_size - pred_horizon + 1):
-        X.append(data_scaled[i: i + window_size])
-        y.append(data_scaled[i + window_size: i + window_size + pred_horizon])
-
-    X = np.stack(X)  # Shape: (num_samples, window_size, num_nodes)
-    y = np.stack(y)  # Shape: (num_samples, pred_horizon, num_nodes)
-
-    print(f"X shape: {X.shape}, y shape: {y.shape}")
-    return X, y, scaler
-
-def split_data(X, y, train_ratio=0.7, val_ratio=0.1):
-    """
-    Split the dataset into train, validation, and test sets.
-
-    Parameters:
-        X (ndarray): Input features, shape (samples, window_size, nodes)
-        y (ndarray): Targets, shape (samples, pred_horizon, nodes)
-        train_ratio (float): Proportion of training data
-        val_ratio (float): Proportion of validation data
-
-    Returns:
-        (X_train, y_train), (X_val, y_val), (X_test, y_test)
-    """
-    total_samples = X.shape[0]
-    train_end = int(total_samples * train_ratio)
-    val_end = int(total_samples * (train_ratio + val_ratio))
-
-    X_train, y_train = X[:train_end], y[:train_end]
-    X_val, y_val = X[train_end:val_end], y[train_end:val_end]
-    X_test, y_test = X[val_end:], y[val_end:]
-
-    print(f"Train: {X_train.shape}, Val: {X_val.shape}, Test: {X_test.shape}")
-    return (X_train, y_train), (X_val, y_val), (X_test, y_test)
-
-
+def preprocess_by_time_and_windows(data: np.ndarray, L_in=12, H=1, ratios=(0.7, 0.1, 0.2)):
+    (train_raw, val_raw, test_raw), idx = chronological_split_by_ratio(data, ratios)
+    (train, val, test), scaler = fit_transform_splits(train_raw, val_raw, test_raw)
+    X_tr, Y_tr = make_windows(train, L_in, H)
+    X_va, Y_va = make_windows(val, L_in, H)
+    X_te, Y_te = make_windows(test, L_in, H)
+    return {
+        "X_train": X_tr, "Y_train": Y_tr,
+        "X_val": X_va, "Y_val": Y_va,
+        "X_test": X_te, "Y_test": Y_te,
+        "scaler": scaler,
+        "split_indices": idx
+    }

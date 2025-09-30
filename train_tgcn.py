@@ -1,151 +1,107 @@
-
-import torch
-import torch.nn as nn
-import torch.optim as optim
-from torch.utils.data import TensorDataset, DataLoader
-from model_tgcn import TGCN
-from preprocess import load_pems_data, preprocess_data, split_data
-from graph_utils import build_knn_adj_matrix, normalize_adj
-import matplotlib.pyplot as plt
 import numpy as np
-import os
-
-print("Using device:", torch.cuda.get_device_name(0) if torch.cuda.is_available() else "CPU")
-
-data = load_pems_data('D:/Study&Work/Study/硕士课程/CN/data/pems-bay.h5')
-X, y, scaler = preprocess_data(data, window_size=12, pred_horizon=1)
-(X_train, y_train), (X_val, y_val), (X_test, y_test) = split_data(X, y)
-
-X_train = torch.tensor(X_train, dtype=torch.float32)
-y_train = torch.tensor(y_train.squeeze(1), dtype=torch.float32)
-X_val = torch.tensor(X_val, dtype=torch.float32)
-y_val = torch.tensor(y_val.squeeze(1), dtype=torch.float32)
-X_test = torch.tensor(X_test, dtype=torch.float32)
-y_test = torch.tensor(y_test.squeeze(1), dtype=torch.float32)
-
-train_loader = DataLoader(TensorDataset(X_train, y_train), batch_size=64, shuffle=True)
-val_loader = DataLoader(TensorDataset(X_val, y_val), batch_size=64)
-test_loader = DataLoader(TensorDataset(X_test, y_test), batch_size=64)
-
-adj_matrix = build_knn_adj_matrix('D:/Study&Work/Study/硕士课程/CN/data/pems-bay-meta.h5', k=5)
-adj_matrix = normalize_adj(adj_matrix)
-adj_tensor = torch.tensor(adj_matrix, dtype=torch.float32)
+import torch
+from torch import nn
+from torch.utils.data import TensorDataset, DataLoader
+from preprocess import preprocess_by_time_and_windows
+from graph_utils import build_knn_adj_matrix, normalize_adj
+from model_tgcn import TGCN  # adjust if your class name differs
 
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-model = TGCN(num_nodes=325, gcn_hidden_dim=128, gru_hidden_dim=128, dropout_rate=0.3).to(device)
-adj_tensor = adj_tensor.to(device)
 
-criterion = nn.MSELoss()
-optimizer = optim.Adam(model.parameters(), lr=0.001)
+# data: np.ndarray of shape [T, N]
+# meta: metadata used to compute inter-sensor distances (as in your project)
+# Replace the following two lines with your own loaders.
+data = np.load("pems_speed.npy")        # placeholder
+meta = np.load("pems_bay_meta.npy", allow_pickle=True).item()  # placeholder
 
-best_val_loss = float('inf')
-patience = 5
-patience_counter = 0
-best_model_path = 'D:/Study&Work/Study/Graph_Neural_Network/model.pth'
+L_in, H = 12, 1
+prep = preprocess_by_time_and_windows(data, L_in=L_in, H=H, ratios=(0.7, 0.1, 0.2))
 
-num_epochs = 80
-for epoch in range(num_epochs):
+Xtr, Ytr = prep["X_train"], prep["Y_train"]  # [B, L_in, N], [B, H, N]
+Xva, Yva = prep["X_val"],   prep["Y_val"]
+Xte, Yte = prep["X_test"],  prep["Y_test"]
+
+
+Xtr = Xtr[..., None]
+Xva = Xva[..., None]
+Xte = Xte[..., None]
+
+# convert to torch
+Xtr = torch.tensor(Xtr, dtype=torch.float32)
+Ytr = torch.tensor(Ytr[:, 0, :], dtype=torch.float32)  # H=1 -> [B, N]
+Xva = torch.tensor(Xva, dtype=torch.float32)
+Yva = torch.tensor(Yva[:, 0, :], dtype=torch.float32)
+Xte = torch.tensor(Xte, dtype=torch.float32)
+Yte = torch.tensor(Yte[:, 0, :], dtype=torch.float32)
+
+train_loader = DataLoader(TensorDataset(Xtr, Ytr), batch_size=64, shuffle=True, drop_last=False)
+val_loader   = DataLoader(TensorDataset(Xva, Yva), batch_size=64, shuffle=False, drop_last=False)
+test_loader  = DataLoader(TensorDataset(Xte, Yte), batch_size=64, shuffle=False, drop_last=False)
+
+# adjacency for training graph
+A = build_knn_adj_matrix(meta, k=5)
+A = normalize_adj(A)
+A = torch.tensor(A, dtype=torch.float32, device=device)
+
+num_nodes = Ytr.shape[1]
+model = TGCN(num_nodes=num_nodes, input_dim=1, hidden_dim=128, output_dim=1).to(device)  # adjust args if needed
+crit = nn.MSELoss()
+opt = torch.optim.Adam(model.parameters(), lr=1e-3)
+best_val = np.inf
+patience, wait = 5, 0
+epochs = 50
+
+for epoch in range(1, epochs + 1):
     model.train()
-    total_loss = 0.0
-    for X_batch, y_batch in train_loader:
-        X_batch, y_batch = X_batch.to(device), y_batch.to(device)
-
-        optimizer.zero_grad()
-        y_pred = model(X_batch, adj_tensor)
-        loss = criterion(y_pred, y_batch)
+    train_loss = 0.0
+    for xb, yb in train_loader:
+        xb = xb.to(device)        # [B, L_in, N, 1]
+        yb = yb.to(device)        # [B, N]
+        opt.zero_grad()
+        pred = model(xb, A).squeeze(-1)  # expected [B, N]
+        loss = crit(pred, yb)
         loss.backward()
-        optimizer.step()
-        total_loss += loss.item()
-
-    avg_train_loss = total_loss / len(train_loader)
+        opt.step()
+        train_loss += loss.item() * xb.size(0)
+    train_loss /= len(train_loader.dataset)
 
     model.eval()
     val_loss = 0.0
     with torch.no_grad():
-        for X_batch, y_batch in val_loader:
-            X_batch, y_batch = X_batch.to(device), y_batch.to(device)
-            y_pred = model(X_batch, adj_tensor)
-            val_loss += criterion(y_pred, y_batch).item()
-    avg_val_loss = val_loss / len(val_loader)
+        for xb, yb in val_loader:
+            xb = xb.to(device)
+            yb = yb.to(device)
+            pred = model(xb, A).squeeze(-1)
+            loss = crit(pred, yb)
+            val_loss += loss.item() * xb.size(0)
+    val_loss /= len(val_loader.dataset)
 
-    print(f"Epoch {epoch+1}/{num_epochs} - Train Loss: {avg_train_loss:.4f} - Val Loss: {avg_val_loss:.4f}")
-
-    if avg_val_loss < best_val_loss - 1e-4:
-        best_val_loss = avg_val_loss
-        patience_counter = 0
-        torch.save(model.state_dict(), best_model_path)
-        print("New best val loss，Model saved.")
+    if val_loss < best_val:
+        best_val = val_loss
+        wait = 0
+        torch.save(model.state_dict(), "tgcn_best.pt")
     else:
-        patience_counter += 1
-        print(f"No improvement. Patience: {patience_counter}/{patience}")
-        if patience_counter >= patience:
-            print("Early stopping")
+        wait += 1
+        if wait >= patience:
             break
 
-model.load_state_dict(torch.load(best_model_path))
-print("Restored best model weights.")
+# test
+model.load_state_dict(torch.load("tgcn_best.pt", map_location=device))
+model.eval()
+test_loss = 0.0
+pred_list, true_list = [], []
+with torch.no_grad():
+    for xb, yb in test_loader:
+        xb = xb.to(device)
+        yb = yb.to(device)
+        pred = model(xb, A).squeeze(-1)
+        loss = crit(pred, yb)
+        test_loss += loss.item() * xb.size(0)
+        pred_list.append(pred.cpu().numpy())
+        true_list.append(yb.cpu().numpy())
+test_loss /= len(test_loader.dataset)
 
-def evaluate_on_test(model, test_loader, criterion, adj_tensor):
-    model.eval()
-    total_loss = 0.0
-    mae_total = 0.0
-    with torch.no_grad():
-        for X_batch, y_batch in test_loader:
-            X_batch = X_batch.to(device)
-            y_batch = y_batch.to(device)
-            output = model(X_batch, adj_tensor)
-            loss = criterion(output, y_batch)
-            mae = torch.mean(torch.abs(output - y_batch))
-            total_loss += loss.item()
-            mae_total += mae.item()
-    print(f"Test MSE Loss: {total_loss / len(test_loader):.4f}")
-    print(f"Test MAE: {mae_total / len(test_loader):.4f}")
-
-evaluate_on_test(model, test_loader, criterion, adj_tensor)
-
-def plot_prediction(model, test_loader, adj_tensor, node_index=0, num_batches=3, save_path=None):
-    model.eval()
-    preds = []
-    trues = []
-    with torch.no_grad():
-        for i, (X_batch, y_batch) in enumerate(test_loader):
-            if i >= num_batches:
-                break
-            X_batch = X_batch.to(device)
-            output = model(X_batch, adj_tensor).cpu().numpy()
-            y_batch = y_batch.cpu().numpy()
-            preds.append(output[:, node_index])
-            trues.append(y_batch[:, node_index])
-
-    preds = np.concatenate(preds)
-    trues = np.concatenate(trues)
-
-    plt.figure(figsize=(10, 4))
-    plt.plot(trues, label='Ground Truth')
-    plt.plot(preds, label='Prediction')
-    plt.title(f'T-GCN Prediction vs Ground Truth - Node {node_index}')
-    plt.legend()
-    plt.tight_layout()
-    if save_path:
-        os.makedirs(os.path.dirname(save_path), exist_ok=True)
-        plt.savefig(save_path, dpi=300)
-        print(f"Plot saved to {save_path}")
-    plt.show()
-
-import pandas as pd
-from sklearn.metrics import mean_squared_error, mean_absolute_error
-
-def select_nodes_by_centrality(path, top_n=5):
-    df = pd.read_csv(path)
-    df_sorted = df.sort_values('Eigenvector', ascending=False)
-    high_nodes = df_sorted.head(top_n)['Node'].tolist()
-    low_nodes = df_sorted.tail(top_n)['Node'].tolist()
-    return high_nodes, low_nodes
-
-high_nodes, low_nodes = select_nodes_by_centrality('D:/Study&Work/Study/硕士课程/CN/Results/centrality_scores.csv', top_n=3)
-selected_nodes = high_nodes + low_nodes
-
-for node in selected_nodes:
-    save_path = f"D:/Study&Work/Study/硕士课程/CN/Results/pred_node{node}.png"
-    print(f"Plotting node {node}")
-    plot_prediction(model, test_loader, adj_tensor, node_index=node, num_batches=3, save_path=save_path)
+y_pred_test = np.concatenate(pred_list, axis=0)  # [T_test, N]
+y_true_test = np.concatenate(true_list, axis=0)  # [T_test, N]
+np.savez("tgcn_test_outputs.npz", y_pred=y_pred_test, y_true=y_true_test, split_indices=prep["split_indices"])
+print(f"Test MSE: {test_loss:.6f}")
