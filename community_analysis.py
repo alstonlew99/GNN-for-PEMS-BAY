@@ -1,62 +1,45 @@
-import pickle
-import numpy as np
-import networkx as nx
-import matplotlib.pyplot as plt
-import os
+import os, pickle, numpy as np, networkx as nx, matplotlib.pyplot as plt
 from networkx.algorithms.community import greedy_modularity_communities
 from networkx.algorithms.community.quality import modularity
+import csv
 
-output_dir = "community_results"
-os.makedirs(output_dir, exist_ok=True)
+def load_adj():
+    if os.path.exists("adj_used.npy"):
+        return np.load("adj_used.npy")
+    with open("adj_mx_bay.pkl", "rb") as f:
+        return pickle.load(f)
 
-with open("D:/Study&Work/Study/硕士课程/CN/data/adj_mx_bay.pkl", "rb") as f:
-    _, _, adj = pickle.load(f, encoding="latin1")
+def save_csv(path, header, rows):
+    with open(path, "w", newline="", encoding="utf-8") as f:
+        w = csv.writer(f); w.writerow(header); w.writerows(rows)
 
-G = nx.from_numpy_array(adj)
+def main():
+    A = load_adj()
+    G = nx.from_numpy_array(A)
 
-if not nx.is_connected(G):
-    print("Graph is not connected. Using largest connected component.")
-    largest_cc = max(nx.connected_components(G), key=len)
-    G = G.subgraph(largest_cc).copy()
+    comms = list(greedy_modularity_communities(G, weight="weight"))
+    part = {}
+    for cid, c in enumerate(comms):
+        for n in c:
+            part[n] = cid
 
-# Greedy modularity
-communities = list(greedy_modularity_communities(G))
-print(f"Detected {len(communities)} communities.")
+    q = modularity(G, comms, weight="weight")
+    with open("community_modularity.txt","w",encoding="utf-8") as f:
+        f.write(f"num_communities={len(comms)}\nmodularity={q:.6f}\n")
 
-with open(os.path.join(output_dir, "communities.txt"), "w") as f:
-    for i, comm in enumerate(communities):
-        comm_list = sorted(list(comm))
-        f.write(f"Community {i+1} ({len(comm_list)} nodes): {comm_list}\n")
+    labels = [[n, part[n]] for n in sorted(G.nodes())]
+    save_csv("community_labels.csv", ["node","community"], labels)
 
-node_color_map = {}
-for i, comm in enumerate(communities):
-    for node in comm:
-        node_color_map[node] = i
-node_colors = [node_color_map[n] for n in G.nodes()]
+    sizes = [[i, len(c)] for i, c in enumerate(comms)]
+    save_csv("community_sizes.csv", ["community","size"], sizes)
 
-pos = nx.spring_layout(G, seed=42)
-plt.figure(figsize=(10, 8))
-nodes = nx.draw_networkx_nodes(G, pos, node_color=node_colors, cmap=plt.cm.tab20, node_size=50)
-nx.draw_networkx_edges(G, pos, alpha=0.3)
-plt.title("Community Detection (Greedy Modularity)")
-plt.axis("off")
-plt.colorbar(nodes, label="Community")
-plt.tight_layout()
-plt.savefig(os.path.join(output_dir, "community_visualization.png"), dpi=300)
-plt.close()
-print(f"Community visualization saved to {output_dir}/community_visualization.png")
+    pos = nx.spring_layout(G, seed=42, weight="weight")
+    cmap = plt.get_cmap("tab20")
+    plt.figure(figsize=(8,8))
+    for i, c in enumerate(comms):
+        nx.draw_networkx_nodes(G, pos, nodelist=list(c), node_size=20, node_color=[cmap(i % 20)])
+    nx.draw_networkx_edges(G, pos, width=0.2, alpha=0.3)
+    plt.axis("off"); plt.tight_layout(); plt.savefig("communities.png", dpi=300)
 
-mod_score = modularity(G, communities)
-community_sizes = [len(c) for c in communities]
-avg_size = np.mean(community_sizes)
-max_size = np.max(community_sizes)
-min_size = np.min(community_sizes)
-
-with open(os.path.join(output_dir, "metrics.txt"), "w") as f:
-    f.write(f"Modularity score: {mod_score:.4f}\n")
-    f.write(f"Number of communities: {len(communities)}\n")
-    f.write(f"Average community size: {avg_size:.2f}\n")
-    f.write(f"Max community size: {max_size}\n")
-    f.write(f"Min community size: {min_size}\n")
-
-print(f"Metrics saved to {output_dir}/metrics.txt")
+if __name__ == "__main__":
+    main()

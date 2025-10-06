@@ -75,3 +75,42 @@ def normalize_adj(adj):
     D_inv_sqrt = np.diag(d_inv_sqrt)
     normalized_adj = D_inv_sqrt @ adj @ D_inv_sqrt
     return normalized_adj
+
+import numpy as np
+
+def build_topo_flow_adj(coords_xy: np.ndarray,
+                        topo_mask: np.ndarray,
+                        node_mean: np.ndarray,
+                        node_var: np.ndarray,
+                        node_cv: np.ndarray,
+                        sigma: float = 0.1,
+                        alpha: float = 0.5,
+                        beta: float = 0.5,
+                        eps: float = 1e-8):
+    """
+    coords_xy: [N,2]
+    topo_mask: [N,N] binary
+    node_mean/var/cv: [N]
+    sigma: distance kernel scale
+    alpha,beta: weights for variance and CV
+    """
+    N = coords_xy.shape[0]
+    d = np.linalg.norm(coords_xy[:, None, :] - coords_xy[None, :, :], axis=-1)
+    geo_w = np.exp(-(d ** 2) / (2 * (sigma ** 2)))
+    m = (node_mean[:, None] + node_mean[None, :]) * 0.5
+    v = (node_var[:, None] + node_var[None, :]) * 0.5
+    c = (node_cv[:, None] + node_cv[None, :]) * 0.5
+    v = v / (np.nanmax(v) + eps)
+    c = c / (np.nanmax(c) + eps)
+    flow_w = (1.0 + alpha * v) * (1.0 + beta * c)
+    A = topo_mask * geo_w * flow_w
+    A = (A + A.T) * 0.5
+    np.fill_diagonal(A, 0.0)
+    return A
+
+def normalize_adj(A: np.ndarray):
+    d = np.sum(A, axis=1)
+    d_inv_sqrt = np.power(d + 1e-8, -0.5)
+    D_inv_sqrt = np.diag(d_inv_sqrt)
+    A_hat = D_inv_sqrt @ (A + np.eye(A.shape[0])) @ D_inv_sqrt
+    return A_hat

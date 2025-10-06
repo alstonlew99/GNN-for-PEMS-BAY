@@ -40,3 +40,14 @@ def preprocess_by_time_and_windows(data: np.ndarray, L_in=12, H=1, ratios=(0.7, 
         "scaler": scaler,
         "split_indices": idx
     }
+
+def compute_node_stats_train_only(data_train: np.ndarray, eps: float = 1e-8):
+    """
+    data_train: [T_train, N]
+    returns node_mean, node_var, node_cv of shape [N]
+    """
+    mean = np.nanmean(data_train, axis=0)
+    var = np.nanvar(data_train, axis=0)
+    std = np.sqrt(var + eps)
+    cv = std / (np.abs(mean) + eps)
+    return mean, var, cv
