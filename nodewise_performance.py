@@ -34,7 +34,7 @@ def hist_two(ax, a, b, bins, label_a, label_b):
     ax.legend(); ax.grid(True, alpha=0.3)
 
 def violin_two(ax, a, b, labels):
-    parts = ax.violinplot([a[~np.isnan(a)], b[~np.isnan(b)]], showmeans=True, showmedians=True)
+    ax.violinplot([a[~np.isnan(a)], b[~np.isnan(b)]], showmeans=True, showmedians=True)
     ax.set_xticks([1, 2]); ax.set_xticklabels(labels)
     ax.grid(True, alpha=0.3)
 
@@ -49,6 +49,12 @@ def scatter_compare(ax, x, y, xlabel, ylabel):
 def main():
     y_true_tg, y_pred_tg = load_npz("tgcn_test_outputs.npz")
     y_true_ml, y_pred_ml = load_npz("mlp_test_outputs.npz")
+
+    # align time length
+    T = min(y_true_tg.shape[0], y_true_ml.shape[0])
+    y_true_tg, y_pred_tg = y_true_tg[:T], y_pred_tg[:T]
+    y_true_ml, y_pred_ml = y_true_ml[:T], y_pred_ml[:T]
+
     assert y_true_tg.shape == y_pred_tg.shape == y_true_ml.shape == y_pred_ml.shape
 
     r_tg, mae_tg, l2_tg, mse_tg = nodewise_stats(y_true_tg, y_pred_tg)
@@ -107,7 +113,6 @@ def main():
     plt.tight_layout(); plt.savefig("scatter_mae_tgcn_vs_mlp.png", dpi=200)
 
     diff_mae = mae_tg - mae_ml
-    diff_r = r_tg - r_ml
     plt.figure(figsize=(10,6))
     ax = plt.gca()
     ax.hist(diff_mae[~np.isnan(diff_mae)], bins=25, alpha=0.8)
